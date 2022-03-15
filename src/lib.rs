@@ -1,1 +1,1 @@
-pub use wasmer_c_api::*;
+pub use wasmer::wasm_c_api::*;
