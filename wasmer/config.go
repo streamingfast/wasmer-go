@@ -1,7 +1,9 @@
 package wasmer
 
 // #include <wasmer.h>
+// extern uint64_t metering_delegate(enum wasmer_parser_operator_t op);
 import "C"
+import "unsafe"
 
 // CompilerKind represents the possible compiler types.
 type CompilerKind C.wasmer_compiler_t
@@ -163,6 +165,68 @@ func (self *Config) UseCraneliftCompiler() *Config {
 
 	C.wasm_config_set_compiler(self.inner(), uint32(C.wasmer_compiler_t(CRANELIFT)))
 
+	return self
+}
+
+var opCodeMap map[Opcode]uint32 = nil
+
+//export metering_delegate
+func metering_delegate(op C.wasmer_parser_operator_t) C.uint64_t {
+	// a simple alogorithm for now just map from opcode to cost directly
+	// all the responsibility is placed on the caller of PushMeteringMiddleware
+	v, b := opCodeMap[Opcode(op)]
+	if !b {
+		return 0 // no value means no cost
+	}
+	return C.uint64_t(v)
+}
+
+// PushMeteringMiddleware allows the middleware metering to be engaged on a map of opcode to cost
+//   config := NewConfig()
+//	 opmap := map[uint32]uint32{
+//		End: 		1,
+//		LocalGet: 	1,
+//		I32Add: 	4,
+//	 }
+//   config.PushMeteringMiddleware(7865444, opmap)
+func (self *Config) PushMeteringMiddleware(maxGasUsageAllowed uint64, opMap map[Opcode]uint32) *Config {
+	if opCodeMap == nil {
+		// REVIEW only allowing this to be set once
+		opCodeMap = opMap
+	}
+	C.wasm_config_push_middleware(self.inner(), C.wasmer_metering_as_middleware(C.wasmer_metering_new(getPlatformLong(maxGasUsageAllowed), (*[0]byte)(C.metering_delegate))))
+	return self
+}
+
+// PushMeteringMiddlewarePtr allows the middleware metering to be engaged on an unsafe.Pointer
+// this pointer must be a to C based function with a signature of:
+//        extern uint64_t cost_delegate_func(enum wasmer_parser_operator_t op);
+// package main
+//
+// #include <wasmer.h>
+// extern uint64_t metering_delegate_alt(enum wasmer_parser_operator_t op);
+// import "C"
+// import "unsafe"
+//
+// func getInternalCPointer() unsafe.Pointer {
+//	  return unsafe.Pointer(C.metering_delegate_alt)
+// }
+//
+// //export metering_delegate_alt
+// func metering_delegate_alt(op C.wasmer_parser_operator_t) C.uint64_t {
+//	v, b := opCodeMap[Opcode(op)]
+//   if !b {
+//	   return 0 // no value means no cost
+//   }
+//   return C.uint64_t(v)
+// }
+//
+// void main(){
+//    config := NewConfig()
+//    config.PushMeteringMiddlewarePtr(800000000, getInternalCPointer())
+// }
+func (self *Config) PushMeteringMiddlewarePtr(maxGasUsageAllowed uint64, p unsafe.Pointer) *Config {
+	C.wasm_config_push_middleware(self.inner(), C.wasmer_metering_as_middleware(C.wasmer_metering_new(getPlatformLong(maxGasUsageAllowed), (*[0]byte)(p))))
 	return self
 }
 
